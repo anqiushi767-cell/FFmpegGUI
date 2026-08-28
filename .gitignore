@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 构建产物
+dist/
+build/
+Output/
+
+# 用户数据（隐私，不提交）
+config.json
+tasks.json
+
+# 临时/测试产物
+_test*/
+_testtmp*/
+_dedup*/
+_dedup_*.txt
+*.log
+
+# 离线依赖包（体积大，用 requirements.txt 安装即可）
+wheels/
+
+# 含本机真实文件路径的测试（隐私）
+full_ui_test.py
+drag_test.py
+real_hlv_test.py

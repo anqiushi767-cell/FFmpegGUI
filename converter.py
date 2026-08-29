@@ -200,14 +200,26 @@ def probe_duration(path):
         return 0.0
 
 
+_ffmpeg_version_cache = None  # 成功才缓存（失败不缓存，下次重试）
+
+
 def ffmpeg_version():
-    """解析当前 ffmpeg 版本号，失败返回 None。"""
+    """解析当前 ffmpeg 版本号，失败返回 None。成功结果缓存避免重复 subprocess。"""
+    global _ffmpeg_version_cache
+    if _ffmpeg_version_cache:
+        return _ffmpeg_version_cache
+    import shutil
+    if not shutil.which("ffmpeg"):
+        return None
     try:
         p = subprocess.run(["ffmpeg", "-version"], capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
                            timeout=30, creationflags=CREATE_NO_WINDOW)
         m = re.search(r"ffmpeg version (\S+)", p.stdout)
-        return m.group(1) if m else None
+        v = m.group(1) if m else None
+        if v:
+            _ffmpeg_version_cache = v
+        return v
     except Exception:
         return None
 

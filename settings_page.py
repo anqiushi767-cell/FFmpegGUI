@@ -1,6 +1,7 @@
 """设置页：输出目录、编码、画质、格式、开机自启、完成后关机、外观主题、主题色、FFmpeg 更新。"""
 import os
 import sys
+import time
 import threading
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QApplication,
@@ -74,6 +75,7 @@ class SettingsPage(QWidget):
     app_download_progress = Signal(float)  # 更新下载进度 0~1
     app_download_done = Signal(str)     # 下载完成（zip 路径）
     app_download_failed = Signal(str)   # 下载失败（错误信息）
+    ffmpeg_version_ready = Signal(str)  # ffmpeg 版本异步获取结果
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,6 +85,9 @@ class SettingsPage(QWidget):
         self.app_download_progress.connect(self._on_download_progress)
         self.app_download_done.connect(self._on_download_done)
         self.app_download_failed.connect(self._on_download_failed)
+        self.ffmpeg_version_ready.connect(self._on_ffmpeg_version)
+        # 异步获取 ffmpeg 版本（不阻塞 UI + 失败重试）
+        threading.Thread(target=self._fetch_ffmpeg_version, daemon=True).start()
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -328,7 +333,7 @@ class SettingsPage(QWidget):
         lff.setSpacing(12)
         ff_col = QVBoxLayout()
         ff_col.addWidget(BodyLabel("FFmpeg 引擎"))
-        self.ffVerLabel = BodyLabel(f"当前版本：{ffmpeg_version() or '未检测到'}")
+        self.ffVerLabel = BodyLabel("当前版本：检测中…")
         ff_col.addWidget(self.ffVerLabel)
         self.ffUpdateLabel = CaptionLabel("")
         ff_col.addWidget(self.ffUpdateLabel)
@@ -456,6 +461,17 @@ class SettingsPage(QWidget):
     def _download_ffmpeg(self):
         """打开 gyan.dev 下载页（Windows 全功能构建）。"""
         QDesktopServices.openUrl(QUrl("https://www.gyan.dev/ffmpeg/builds/"))
+
+    def _fetch_ffmpeg_version(self):
+        """后台获取 ffmpeg 版本，失败延时重试一次。"""
+        v = ffmpeg_version()
+        if not v:
+            time.sleep(1.5)
+            v = ffmpeg_version()
+        self.ffmpeg_version_ready.emit(v or "")
+
+    def _on_ffmpeg_version(self, v):
+        self.ffVerLabel.setText(f"当前版本：{v or '未检测到'}")
 
     def _check_app_update(self):
         """后台请求 GitHub 最新版本，避免阻塞 UI。"""

@@ -72,6 +72,7 @@ jobs:
         run: |
           sed -i "s/^VERSION = \".*\"/VERSION = \"${{ steps.ver.outputs.VERSION }}\"/" app_info.py
           sed -i "s/#define AppVersion \".*\"/#define AppVersion \"${{ steps.ver.outputs.VERSION }}\"/" installer.iss
+          sed -i "s/\"version\": \".*\"/\"version\": \"${{ steps.ver.outputs.VERSION }}\"/" versions.json
 
       - name: Nuitka 打包
         shell: bash
@@ -95,3 +96,12 @@ jobs:
             Output/FFmpegGUI-Setup-*-Windows-x64.exe
             Output/FFmpegGUI-Portable-Windows-x64.zip
           generate_release_notes: true
+
+      - name: 同步 versions.json
+        shell: bash
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add versions.json app_info.py installer.iss
+          git commit -m "chore: bump to v${{ steps.ver.outputs.VERSION }}" || true
+          git push origin master

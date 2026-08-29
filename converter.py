@@ -226,16 +226,16 @@ def latest_ffmpeg_version():
 
 
 def latest_app_version():
-    """从 GitHub Releases API 获取最新版本号，失败返回 None。"""
+    """从 GitHub raw 的 versions.json 获取最新版本（快、无 API 限流），失败返回 None。"""
     import urllib.request
     import json
     try:
         req = urllib.request.Request(
-            "https://api.github.com/repos/anqiushi767-cell/FFmpegGUI"
-            "/releases/latest",
+            "https://raw.githubusercontent.com/anqiushi767-cell/FFmpegGUI"
+            "/master/versions.json",
             headers={"User-Agent": "FFmpegGUI"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.load(r).get("tag_name", "").lstrip("vV")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.load(r).get("version", "").lstrip("vV")
     except Exception:
         return None
 

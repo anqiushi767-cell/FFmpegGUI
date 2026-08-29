@@ -2,7 +2,7 @@
 import os
 import sys
 import threading
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QApplication,
                                QFileDialog, QToolButton, QFrame)
 from PySide6.QtGui import QColor, QDesktopServices
@@ -69,9 +69,20 @@ def read_system_accent():
 
 
 class SettingsPage(QWidget):
+    ff_update_ready = Signal(str)       # ffmpeg 版本检查结果
+    app_update_ready = Signal(str)      # 程序版本检查结果
+    app_download_progress = Signal(float)  # 更新下载进度 0~1
+    app_download_done = Signal(str)     # 下载完成（zip 路径）
+    app_download_failed = Signal(str)   # 下载失败（错误信息）
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._build()
+        self.ff_update_ready.connect(self._show_update_result)
+        self.app_update_ready.connect(self._show_app_result)
+        self.app_download_progress.connect(self._on_download_progress)
+        self.app_download_done.connect(self._on_download_done)
+        self.app_download_failed.connect(self._on_download_failed)
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -312,44 +323,56 @@ class SettingsPage(QWidget):
 
         # FFmpeg 引擎版本
         card_ff = CardWidget(self)
-        lff = QVBoxLayout(card_ff)
+        lff = QHBoxLayout(card_ff)
         lff.setContentsMargins(16, 14, 16, 14)
-        lff.setSpacing(8)
-        lff.addWidget(BodyLabel("FFmpeg 引擎"))
+        lff.setSpacing(12)
+        ff_col = QVBoxLayout()
+        ff_col.addWidget(BodyLabel("FFmpeg 引擎"))
         self.ffVerLabel = BodyLabel(f"当前版本：{ffmpeg_version() or '未检测到'}")
-        lff.addWidget(self.ffVerLabel)
+        ff_col.addWidget(self.ffVerLabel)
+        self.ffUpdateLabel = CaptionLabel("")
+        ff_col.addWidget(self.ffUpdateLabel)
+        ff_col.addStretch(1)
+        lff.addLayout(ff_col, 1)
+        ff_btns = QVBoxLayout()
+        ff_btns.setSpacing(8)
         self.ffCheckBtn = PushButton("检查更新", card_ff)
         self.ffCheckBtn.clicked.connect(self._check_ffmpeg_update)
-        lff.addWidget(self.ffCheckBtn)
+        ff_btns.addWidget(self.ffCheckBtn)
         self.ffDownloadBtn = PushButton("下载 FFmpeg", card_ff)
         self.ffDownloadBtn.setToolTip("打开 gyan.dev 下载 Windows 全功能构建")
         self.ffDownloadBtn.clicked.connect(self._download_ffmpeg)
-        lff.addWidget(self.ffDownloadBtn)
-        self.ffUpdateLabel = CaptionLabel("")
-        lff.addWidget(self.ffUpdateLabel)
+        ff_btns.addWidget(self.ffDownloadBtn)
+        lff.addLayout(ff_btns, 0)
         root.addWidget(card_ff)
 
         # 程序更新
         card_app = CardWidget(self)
-        lapp = QVBoxLayout(card_app)
+        lapp = QHBoxLayout(card_app)
         lapp.setContentsMargins(16, 14, 16, 14)
-        lapp.setSpacing(8)
-        lapp.addWidget(BodyLabel("程序更新"))
+        lapp.setSpacing(12)
+        app_col = QVBoxLayout()
+        app_col.addWidget(BodyLabel("程序更新"))
         self.appVerLabel = BodyLabel(f"当前版本：v{VERSION}")
-        lapp.addWidget(self.appVerLabel)
-        self.appCheckBtn = PushButton("检查更新", card_app)
-        self.appCheckBtn.clicked.connect(self._check_app_update)
-        lapp.addWidget(self.appCheckBtn)
+        app_col.addWidget(self.appVerLabel)
         self.appUpdateLabel = CaptionLabel("")
-        lapp.addWidget(self.appUpdateLabel)
+        app_col.addWidget(self.appUpdateLabel)
         self.appDownloadBtn = HyperlinkButton(DOWNLOAD_URL, "前往下载最新版",
                                               card_app)
         self.appDownloadBtn.setVisible(False)
-        lapp.addWidget(self.appDownloadBtn)
-        self.appUpdateBtn = PushButton("立即更新（热更新）", card_app)
+        app_col.addWidget(self.appDownloadBtn)
+        app_col.addStretch(1)
+        lapp.addLayout(app_col, 1)
+        app_btns = QVBoxLayout()
+        app_btns.setSpacing(8)
+        self.appCheckBtn = PushButton("检查更新", card_app)
+        self.appCheckBtn.clicked.connect(self._check_app_update)
+        app_btns.addWidget(self.appCheckBtn)
+        self.appUpdateBtn = PushButton("立即更新", card_app)
         self.appUpdateBtn.setVisible(False)
         self.appUpdateBtn.clicked.connect(self._apply_update)
-        lapp.addWidget(self.appUpdateBtn)
+        app_btns.addWidget(self.appUpdateBtn)
+        lapp.addLayout(app_btns, 0)
         root.addWidget(card_app)
 
     def _pick_dir(self):
@@ -426,8 +449,7 @@ class SettingsPage(QWidget):
         self.ffUpdateLabel.setText("正在检查 gyan.dev…")
 
         def worker():
-            latest = latest_ffmpeg_version()
-            QTimer.singleShot(0, lambda: self._show_update_result(latest))
+            self.ff_update_ready.emit(latest_ffmpeg_version() or "")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -436,14 +458,14 @@ class SettingsPage(QWidget):
         QDesktopServices.openUrl(QUrl("https://www.gyan.dev/ffmpeg/builds/"))
 
     def _check_app_update(self):
-        """后台请求 GitHub Releases API，检查程序新版本。"""
+        """后台请求 GitHub 最新版本，避免阻塞 UI。"""
         self.appCheckBtn.setEnabled(False)
         self.appUpdateLabel.setText("正在检查 GitHub…")
         self.appDownloadBtn.setVisible(False)
+        self.appUpdateBtn.setVisible(False)
 
         def worker():
-            latest = latest_app_version()
-            QTimer.singleShot(0, lambda: self._show_app_result(latest))
+            self.app_update_ready.emit(latest_app_version() or "")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -469,28 +491,28 @@ class SettingsPage(QWidget):
             try:
                 latest = latest_app_version()
                 if not latest:
-                    QTimer.singleShot(0, lambda: self.appUpdateLabel.setText(
-                        "下载失败：无法获取版本"))
+                    self.app_download_failed.emit("无法获取版本")
                     return
-
-                def progress(p):
-                    QTimer.singleShot(0, lambda: self.appUpdateLabel.setText(
-                        f"正在下载更新… {int(p * 100)}%"))
-
-                zip_path = updater.download_update(latest, progress)
-
-                def done():
-                    self.appUpdateLabel.setText("下载完成，即将重启应用更新…")
-                    updater.apply_update(zip_path)
-                    QApplication.instance().quit()
-
-                QTimer.singleShot(0, done)
+                zip_path = updater.download_update(
+                    latest, self.app_download_progress.emit)
+                self.app_download_done.emit(zip_path)
             except Exception as e:
-                QTimer.singleShot(0, lambda: self.appUpdateLabel.setText(
-                    f"下载失败：{e}"))
-                QTimer.singleShot(0, lambda: self.appUpdateBtn.setEnabled(True))
+                self.app_download_failed.emit(str(e))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_download_progress(self, p):
+        self.appUpdateLabel.setText(f"正在下载更新… {int(p * 100)}%")
+
+    def _on_download_done(self, zip_path):
+        import updater
+        self.appUpdateLabel.setText("下载完成，即将重启应用更新…")
+        updater.apply_update(zip_path)
+        QApplication.instance().quit()
+
+    def _on_download_failed(self, err):
+        self.appUpdateLabel.setText(f"下载失败：{err}")
+        self.appUpdateBtn.setEnabled(True)
 
     def _show_update_result(self, latest):
         self.ffCheckBtn.setEnabled(True)

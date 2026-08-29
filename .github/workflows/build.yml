@@ -68,7 +68,7 @@ jobs:
       - name: 安装 Inno Setup 7
         shell: bash
         run: |
-          curl -sL -o innosetup.exe https://files.jrsoftware.org/is/7/innosetup-7.1.0.exe
+          curl -sL -o innosetup.exe https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe
           ./innosetup.exe //VERYSILENT //SUPPRESSMSGBOXES //NORESTART //SP-
 
       - name: 更新版本号

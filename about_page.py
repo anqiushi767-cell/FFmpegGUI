@@ -1,8 +1,11 @@
-"""关于页：程序信息 + 第三方开源组件声明。"""
+"""关于页：关于 / 了解作者 / 提供反馈 + 第三方开源组件声明。"""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame
 from qfluentwidgets import (CardWidget, SubtitleLabel, TitleLabel, BodyLabel,
-                            CaptionLabel, ScrollArea, SmoothMode)
+                            CaptionLabel, HyperlinkButton, ScrollArea,
+                            SmoothMode)
+
+from app_info import VERSION, AUTHOR_BILIBILI, FEEDBACK_URL, APP_REPO
 
 THIRD_PARTY = [
     ("qfluentwidgets", "Fluent Design UI 组件库", "MIT"),
@@ -23,7 +26,6 @@ class AboutPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        # 内容多，套滚动区避免卡片被布局压扁
         scroll = ScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -41,20 +43,32 @@ class AboutPage(QWidget):
         root.setAlignment(Qt.AlignTop)
 
         root.addWidget(TitleLabel("FFmpeg 转码器"))
-        root.addWidget(CaptionLabel("GD 风格批量视频转码工具 · v1.0"))
+        root.addWidget(CaptionLabel(f"批量音视频处理工具 · v{VERSION}"))
 
-        # 程序信息
-        info = CardWidget(self)
-        li = QVBoxLayout(info)
-        li.setContentsMargins(16, 14, 16, 14)
-        li.setSpacing(8)
-        li.addWidget(BodyLabel(
-            "功能：拖入视频批量转码（H.264 MP4 / MKV / WebM / MP3），"
-            "画质档位、全局进度、完成后关机、开机自启、系统托盘。"))
-        li.addWidget(BodyLabel(
-            "UI 参考 Ghost Downloader（MIT 协议开源项目）的设计风格，"
-            "仅借鉴设计语言，代码独立实现。"))
-        root.addWidget(info)
+        # 关于
+        about = CardWidget(self)
+        la = QVBoxLayout(about)
+        la.setContentsMargins(16, 14, 16, 14)
+        la.setSpacing(8)
+        la.addWidget(SubtitleLabel("关于"))
+        la.addWidget(BodyLabel(
+            "基于 FFmpeg 的批量音视频处理 GUI，支持 20 种操作：转码、"
+            "剪辑、提取、GIF、录屏、字幕、去水印、流媒体下载等。"))
+        root.addWidget(about)
+
+        # 了解作者 / 提供反馈
+        contact = CardWidget(self)
+        lc = QVBoxLayout(contact)
+        lc.setContentsMargins(16, 14, 16, 14)
+        lc.setSpacing(8)
+        lc.addWidget(SubtitleLabel("联系与反馈"))
+        lc.addWidget(HyperlinkButton(AUTHOR_BILIBILI, "了解作者（B 站空间）",
+                                     contact))
+        lc.addWidget(HyperlinkButton(FEEDBACK_URL, "提供反馈（GitHub Issues）",
+                                     contact))
+        lc.addWidget(HyperlinkButton(
+            f"https://github.com/{APP_REPO}", "项目仓库", contact))
+        root.addWidget(contact)
 
         # 第三方库
         libs = CardWidget(self)
@@ -77,7 +91,8 @@ class AboutPage(QWidget):
         ln.setSpacing(8)
         ln.addWidget(BodyLabel("许可证说明"))
         ln.addWidget(CaptionLabel(
-            "以上组件均为宽松开源协议（MIT / BSD / PSF）或 LGPL：使用它们不需要开源本程序。"
+            "本程序以 GPL-3.0 协议开源。"
+            "以上组件均为宽松开源协议（MIT / BSD / PSF）或 LGPL。"
             "LGPL 要求用户可替换库版本（Python 虚拟环境天然满足）。"
             "FFmpeg 以独立进程命令行方式调用，不构成衍生作品。"
             "各组件许可证全文见其官方仓库。"))

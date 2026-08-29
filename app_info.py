@@ -1,0 +1,6 @@
+"""应用元数据：版本号、仓库、作者链接，集中管理。"""
+VERSION = "1.0.0"
+APP_REPO = "anqiushi767-cell/FFmpegGUI"
+AUTHOR_BILIBILI = "https://space.bilibili.com/3494359752247440"
+FEEDBACK_URL = "https://github.com/" + APP_REPO + "/issues"
+DOWNLOAD_URL = "https://github.com/" + APP_REPO + "/releases/latest"

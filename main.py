@@ -13,6 +13,23 @@ from converter import ffmpeg_version, latest_ffmpeg_version, version_tuple
 from task_page import TaskPage
 from settings_page import SettingsPage
 from about_page import AboutPage
+import logging_setup
+
+
+def ensure_single_instance() -> bool:
+    """单实例保护：已有实例则唤起其窗口并返回 False。"""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW(None, False, "FFmpegGUI_SingleInstance")
+    if kernel32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
+        return True
+    # 已有实例：唤起主窗口
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, "FFmpeg 转码器")
+    if hwnd:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+    return False
 
 
 def apply_theme_color():
@@ -128,6 +145,9 @@ class MainWindow(MSFluentWindow):
 
 
 def main():
+    logging_setup.setup()  # 崩溃日志 + 全局异常捕获
+    if not ensure_single_instance():
+        return  # 已有实例运行，已唤起其窗口
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # 关窗不退出，托盘常驻
     setTheme([Theme.AUTO, Theme.LIGHT, Theme.DARK][config.theme])
@@ -183,6 +203,11 @@ def main():
     w.taskPage._all_done_cb = lambda: tray.showMessage(
         "转码完成", "所有任务已处理完毕",
         QSystemTrayIcon.Information, 3000)
+
+    # 热更新前保存任务（updater 覆盖文件前收尾）
+    import updater
+    updater.before_apply = lambda: (
+        w.taskPage.cancel_all(), w.taskPage.save_tasks(force=True))
 
     # 开机自启（--tray）：静默启动到托盘，不弹主窗口
     if "--tray" not in sys.argv:

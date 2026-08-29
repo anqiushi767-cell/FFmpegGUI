@@ -225,6 +225,21 @@ def latest_ffmpeg_version():
         return None
 
 
+def latest_app_version():
+    """从 GitHub Releases API 获取最新版本号，失败返回 None。"""
+    import urllib.request
+    import json
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/anqiushi767-cell/FFmpegGUI"
+            "/releases/latest",
+            headers={"User-Agent": "FFmpegGUI"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.load(r).get("tag_name", "").lstrip("vV")
+    except Exception:
+        return None
+
+
 def version_tuple(v):
     """版本号字符串 → (major, minor, patch) 数字元组，用于比较。"""
     m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", v or "")

@@ -1,0 +1,97 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'                # 打 tag（如 v1.1.0）触发
+  workflow_dispatch:         # 手动触发
+
+permissions:
+  contents: write            # 允许上传 Release
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          pip install PySide6==6.11.2 PySide6-Fluent-Widgets==1.11.3
+
+      - name: 安装 ffmpeg
+        run: choco install ffmpeg -y --no-progress
+
+      - name: 冒烟测试
+        shell: bash
+        run: QT_QPA_PLATFORM=offscreen python smoke_test.py
+
+      - name: 功能测试
+        shell: bash
+        run: |
+          QT_QPA_PLATFORM=offscreen python batch1_test.py
+          QT_QPA_PLATFORM=offscreen python batch2_test.py
+          QT_QPA_PLATFORM=offscreen python batch3_test.py
+          QT_QPA_PLATFORM=offscreen python batch4_meta_test.py
+          QT_QPA_PLATFORM=offscreen python batch4_subtitle_test.py
+          QT_QPA_PLATFORM=offscreen python batch4_delogo_test.py
+
+  build:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')   # 只有打 tag 才打包
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 提取版本号
+        id: ver
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: 安装依赖
+        run: |
+          pip install PySide6==6.11.2 PySide6-Fluent-Widgets==1.11.3
+          pip install nuitka ordered-set zstandard
+
+      - name: 安装 Inno Setup 7
+        shell: bash
+        run: |
+          curl -sL -o innosetup.exe https://files.jrsoftware.org/is/7/innosetup-7.1.0.exe
+          ./innosetup.exe //VERYSILENT //SUPPRESSMSGBOXES //NORESTART //SP-
+
+      - name: 更新版本号
+        shell: bash
+        run: |
+          sed -i "s/^VERSION = \".*\"/VERSION = \"${{ steps.ver.outputs.VERSION }}\"/" app_info.py
+          sed -i "s/#define AppVersion \".*\"/#define AppVersion \"${{ steps.ver.outputs.VERSION }}\"/" installer.iss
+
+      - name: Nuitka 打包
+        shell: bash
+        run: |
+          python -m nuitka --standalone --enable-plugin=pyside6 \
+            --windows-icon-from-ico=app.ico --windows-console-mode=disable \
+            --msvc=latest --include-package-data=qfluentwidgets \
+            --assume-yes-for-downloads --output-dir=dist -o ffmpegGUI main.py
+
+      - name: 制作安装包 + 免安装 zip
+        shell: bash
+        run: |
+          "C:\\Program Files\\Inno Setup 7\\ISCC.exe" installer.iss
+          python -c "import zipfile,os; src='dist/main.dist'; out='Output/FFmpegGUI-Portable-Windows-x64.zip'; z=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED); [z.write(os.path.join(r,f), os.path.join('FFmpegGUI', os.path.relpath(os.path.join(r,f), src))) for r,d,fs in os.walk(src) for f in fs]; z.close()"
+
+      - name: 上传 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "FFmpegGUI v${{ steps.ver.outputs.VERSION }}"
+          files: |
+            Output/FFmpegGUI-Setup-*-Windows-x64.exe
+            Output/FFmpegGUI-Portable-Windows-x64.zip
+          generate_release_notes: true

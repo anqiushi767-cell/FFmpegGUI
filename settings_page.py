@@ -8,8 +8,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QApplication,
                                QFileDialog, QToolButton, QFrame)
 from PySide6.QtGui import QColor, QDesktopServices
 from qfluentwidgets import (CardWidget, SubtitleLabel, BodyLabel, CaptionLabel,
-                            ComboBox, LineEdit, PushButton, ToolButton, FluentIcon,
-                            HyperlinkButton,
+                            ComboBox, LineEdit, PushButton, PrimaryPushButton,
+                            ToolButton, FluentIcon, HyperlinkButton,
+                            InfoBar, InfoBarPosition,
                             setTheme, setThemeColor, Theme, SwitchButton,
                             ScrollArea, SmoothMode)
 
@@ -341,10 +342,10 @@ class SettingsPage(QWidget):
         lff.addLayout(ff_col, 1)
         ff_btns = QVBoxLayout()
         ff_btns.setSpacing(8)
-        self.ffCheckBtn = PushButton("检查更新", card_ff)
+        self.ffCheckBtn = PrimaryPushButton("检查更新", card_ff)
         self.ffCheckBtn.clicked.connect(self._check_ffmpeg_update)
         ff_btns.addWidget(self.ffCheckBtn)
-        self.ffDownloadBtn = PushButton("下载 FFmpeg", card_ff)
+        self.ffDownloadBtn = PrimaryPushButton("下载 FFmpeg", card_ff)
         self.ffDownloadBtn.setToolTip("打开 gyan.dev 下载 Windows 全功能构建")
         self.ffDownloadBtn.clicked.connect(self._download_ffmpeg)
         ff_btns.addWidget(self.ffDownloadBtn)
@@ -370,10 +371,10 @@ class SettingsPage(QWidget):
         lapp.addLayout(app_col, 1)
         app_btns = QVBoxLayout()
         app_btns.setSpacing(8)
-        self.appCheckBtn = PushButton("检查更新", card_app)
+        self.appCheckBtn = PrimaryPushButton("检查更新", card_app)
         self.appCheckBtn.clicked.connect(self._check_app_update)
         app_btns.addWidget(self.appCheckBtn)
-        self.appUpdateBtn = PushButton("立即更新", card_app)
+        self.appUpdateBtn = PrimaryPushButton("立即更新", card_app)
         self.appUpdateBtn.setVisible(False)
         self.appUpdateBtn.clicked.connect(self._apply_update)
         app_btns.addWidget(self.appUpdateBtn)
@@ -452,6 +453,9 @@ class SettingsPage(QWidget):
         """后台请求 gyan.dev 最新版本，避免阻塞 UI。"""
         self.ffCheckBtn.setEnabled(False)
         self.ffUpdateLabel.setText("正在检查 gyan.dev…")
+        InfoBar.info("正在检查 FFmpeg 更新", "正在查询 gyan.dev 最新版本…",
+                     duration=2000, position=InfoBarPosition.BOTTOM_RIGHT,
+                     parent=self.window())
 
         def worker():
             self.ff_update_ready.emit(latest_ffmpeg_version() or "")
@@ -479,6 +483,9 @@ class SettingsPage(QWidget):
         self.appUpdateLabel.setText("正在检查 GitHub…")
         self.appDownloadBtn.setVisible(False)
         self.appUpdateBtn.setVisible(False)
+        InfoBar.info("正在检查更新", "正在查询最新版本…",
+                     duration=2000, position=InfoBarPosition.BOTTOM_RIGHT,
+                     parent=self.window())
 
         def worker():
             self.app_update_ready.emit(latest_app_version() or "")
@@ -489,13 +496,29 @@ class SettingsPage(QWidget):
         self.appCheckBtn.setEnabled(True)
         if not latest:
             self.appUpdateLabel.setText("检查失败（网络不可达）")
+            InfoBar.error("检查失败", "网络不可达，请稍后重试",
+                          duration=3000, position=InfoBarPosition.BOTTOM_RIGHT,
+                          parent=self.window())
             return
         if version_tuple(latest) <= version_tuple(VERSION):
             self.appUpdateLabel.setText(f"已是最新版本（v{VERSION}）")
+            InfoBar.success("已是最新版本", f"当前 v{VERSION} 已是最新",
+                            duration=3000, position=InfoBarPosition.BOTTOM_RIGHT,
+                            parent=self.window())
         else:
             self.appUpdateLabel.setText(f"发现新版本 v{latest}")
             self.appDownloadBtn.setVisible(True)
             self.appUpdateBtn.setVisible(True)
+            w = InfoBar.info("发现新版本", f"新版本 v{latest} 可用",
+                             duration=8000, position=InfoBarPosition.BOTTOM_RIGHT,
+                             parent=self.window())
+            dl = PrimaryPushButton("下载", w)
+            dl.clicked.connect(self._apply_update)
+            w.addWidget(dl)
+            detail = PushButton("查看详情", w)
+            detail.clicked.connect(lambda: QDesktopServices.openUrl(
+                QUrl(DOWNLOAD_URL)))
+            w.addWidget(detail)
 
     def _apply_update(self):
         """热更新：下载新版本 zip → 解压 → updater 覆盖重启。"""
@@ -535,8 +558,20 @@ class SettingsPage(QWidget):
         current = ffmpeg_version()
         if not latest:
             self.ffUpdateLabel.setText("检查失败（网络不可达）")
+            InfoBar.error("检查失败", "网络不可达，请稍后重试",
+                          duration=3000, position=InfoBarPosition.BOTTOM_RIGHT,
+                          parent=self.window())
             return
         if version_tuple(current) >= version_tuple(latest):
             self.ffUpdateLabel.setText(f"已是最新版本（{latest}）")
+            InfoBar.success("FFmpeg 已是最新", f"当前版本 {current}",
+                            duration=3000, position=InfoBarPosition.BOTTOM_RIGHT,
+                            parent=self.window())
         else:
-            self.ffUpdateLabel.setText(f"有新版本 {latest}，请到 gyan.dev 下载替换")
+            self.ffUpdateLabel.setText(f"有新版本 {latest}")
+            w = InfoBar.info("FFmpeg 有更新", f"新版本 {latest} 可用",
+                             duration=8000, position=InfoBarPosition.BOTTOM_RIGHT,
+                             parent=self.window())
+            dl = PrimaryPushButton("下载", w)
+            dl.clicked.connect(self._download_ffmpeg)
+            w.addWidget(dl)

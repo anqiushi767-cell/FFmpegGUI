@@ -9,7 +9,9 @@ from qfluentwidgets import (MSFluentWindow, FluentIcon, NavigationItemPosition,
                             Action, RoundMenu)
 
 from config import config
-from converter import ffmpeg_version, latest_ffmpeg_version, version_tuple
+from converter import (ffmpeg_version, latest_ffmpeg_version, version_tuple,
+                       latest_app_version)
+from app_info import VERSION
 from task_page import TaskPage
 from settings_page import SettingsPage
 from about_page import AboutPage
@@ -226,8 +228,21 @@ def main():
         except Exception:
             pass  # 静默失败，不打扰用户
 
+    # 启动后静默检查程序更新（发现新版本才提示）
+    def check_app_update():
+        try:
+            latest = latest_app_version()
+            if latest and version_tuple(latest) > version_tuple(VERSION):
+                QTimer.singleShot(0, lambda: tray.showMessage(
+                    "FFmpegGUI 有更新",
+                    f"新版本 v{latest} 已发布，可到「设置」页更新",
+                    QSystemTrayIcon.Information, 6000))
+        except Exception:
+            pass  # 静默失败，不打扰用户
+
     QTimer.singleShot(3000, lambda: (
-        threading.Thread(target=check_ffmpeg_update, daemon=True).start()
+        threading.Thread(target=check_ffmpeg_update, daemon=True).start(),
+        threading.Thread(target=check_app_update, daemon=True).start()
         if config.check_update_on_start else None))
 
     sys.exit(app.exec())

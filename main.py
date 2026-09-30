@@ -16,6 +16,7 @@ from task_page import TaskPage
 from settings_page import SettingsPage
 from about_page import AboutPage
 import logging_setup
+import window_effects
 
 
 def ensure_single_instance() -> bool:
@@ -152,6 +153,7 @@ def main():
         return  # 已有实例运行，已唤起其窗口
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # 关窗不退出，托盘常驻
+    window_effects.install_native_border_removal(app)  # 去掉 Win11 原生 1px 描边
     setTheme([Theme.AUTO, Theme.LIGHT, Theme.DARK][config.theme])
     apply_theme_color()
     w = MainWindow()

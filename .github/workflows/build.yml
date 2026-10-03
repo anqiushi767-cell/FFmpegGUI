@@ -2,12 +2,19 @@ name: Build & Release
 
 on:
   push:
+    branches:
+      - master              # 平时 push 也跑一遍打包（只出 artifact，不发 Release）
     tags:
       - 'v*'                # 打 tag（如 v1.1.0）触发
-  workflow_dispatch:         # 手动触发
+  pull_request:             # PR 同样验证打包链路
+  workflow_dispatch:        # 手动触发
 
 permissions:
   contents: write            # 允许上传 Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true   # 同一分支/tag 的新提交自动取消旧构建
 
 jobs:
   test:
@@ -20,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: 安装依赖
         run: |
@@ -31,6 +39,10 @@ jobs:
       - name: 冒烟测试
         shell: bash
         run: QT_QPA_PLATFORM=offscreen python smoke_test.py
+
+      - name: 命令构建单测
+        shell: bash
+        run: python build_cmd_test.py
 
       - name: 功能测试
         shell: bash
@@ -44,21 +56,31 @@ jobs:
 
   build:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')   # 只有打 tag 才打包
     runs-on: windows-latest
     env:
       PYTHONIOENCODING: utf-8
+      # tag → 发 Release；其它（master push / PR / 手动）→ 只出 artifact
+      IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: 提取版本号
         id: ver
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/v}" ]; then
+            V="${GITHUB_REF#refs/tags/v}"            # tag：正式版本号
+          else
+            BASE=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' app_info.py)
+            V="${BASE}.${{ github.run_number }}"     # 非 tag：基线 + 构建号
+          fi
+          echo "VERSION=$V" >> "$GITHUB_OUTPUT"
+          echo "本次构建版本号：$V"
 
       - name: 安装依赖
         run: |
@@ -92,20 +114,159 @@ jobs:
           "C:\\Program Files\\Inno Setup 7\\ISCC.exe" installer.iss
           python -c "import zipfile,os; src='dist/main.dist'; out='Output/FFmpegGUI-Portable-Windows-x64.zip'; z=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED); [z.write(os.path.join(r,f), os.path.join('FFmpegGUI', os.path.relpath(os.path.join(r,f), src))) for r,d,fs in os.walk(src) for f in fs]; z.close()"
 
+      - name: 生成 SHA256 校验清单
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob, hashlib, os
+          lines = []
+          for p in sorted(glob.glob("Output/*")):
+              if not os.path.isfile(p) or os.path.basename(p) == "SHA256SUMS.txt":
+                  continue
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              lines.append(f"{h.hexdigest()}  {os.path.basename(p)}")
+          with open("Output/SHA256SUMS.txt", "w", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: 写入构建摘要
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### FFmpegGUI ${{ steps.ver.outputs.VERSION }}（${{ github.ref_name }}）"
+            echo ""
+            echo '```'
+            cat Output/SHA256SUMS.txt 2>/dev/null || echo "（没有产物）"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传构建产物（artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: FFmpegGUI-${{ steps.ver.outputs.VERSION }}-${{ github.sha }}
+          path: |
+            Output/FFmpegGUI-Setup-*.exe
+            Output/FFmpegGUI-Portable-Windows-x64.zip
+            Output/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: 上传 Release
+        if: env.IS_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: "FFmpegGUI v${{ steps.ver.outputs.VERSION }}"
           files: |
             Output/FFmpegGUI-Setup-*-Windows-x64.exe
             Output/FFmpegGUI-Portable-Windows-x64.zip
+            Output/SHA256SUMS.txt
           generate_release_notes: true
 
       - name: 同步 versions.json
+        if: env.IS_RELEASE == 'true'
         shell: bash
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add versions.json app_info.py installer.iss
-          git commit -m "chore: bump to v${{ steps.ver.outputs.VERSION }}" || true
+          # [skip ci]：这次回写的版本号提交不要再触发一轮打包
+          git commit -m "chore: bump to v${{ steps.ver.outputs.VERSION }} [skip ci]" || true
           git push origin HEAD:master
+
+  # 发布后自检：上次就是"Release 出来了但 versions.json 没同步"，用户检查更新收不到。
+  # 这一步把那种静默故障变成 CI 红灯。
+  verify-release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 校验 versions.json 已同步
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          TAG="${GITHUB_REF#refs/tags/v}"
+          # 硬校验走 API 读 master 上的文件：不受 CDN 缓存影响，能确定性判断
+          # "同步步骤到底成没成功"
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/versions.json?ref=master"
+          ok=0
+          for i in $(seq 1 6); do
+            V=$(curl -sSL --max-time 20 -H "Accept: application/vnd.github.raw" \
+                 -H "Authorization: Bearer ${GH_TOKEN}" "${API}&t=${RANDOM}${RANDOM}" \
+                 | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)
+            echo "第 ${i} 次（master 上的 versions.json）：${V:-<取不到>}，期望 ${TAG}"
+            if [ "${V}" = "${TAG}" ]; then ok=1; break; fi
+            sleep 10
+          done
+          if [ "${ok}" != "1" ]; then
+            echo "::error::master 上的 versions.json 没更新到 ${TAG}——同步步骤失败了，用户检查更新会收不到新版本"
+            exit 1
+          fi
+          # 用户实际读的是 raw.githubusercontent（有 CDN 缓存），这里只提示不拦人，
+          # 免得缓存没到点就误报红灯
+          RAW="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/versions.json"
+          for i in $(seq 1 8); do
+            R=$(curl -sS --max-time 15 "${RAW}?cb=${RANDOM}${RANDOM}" \
+                | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || true)
+            if [ "${R}" = "${TAG}" ]; then
+              echo "raw.githubusercontent 已生效 ✅"
+              exit 0
+            fi
+            echo "raw 上还是 ${R:-<取不到>}（CDN 缓存中，最长约 5 分钟）"
+            sleep 15
+          done
+          echo "::warning::raw.githubusercontent 还是旧版本，CDN 生效后会正常（程序端最坏几分钟后能检测到更新）"
+
+      - name: 校验 Release 资产与 SHA256
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER="${TAG#v}"
+          export DL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" -o release.json
+          VER="${VER}" python3 - <<'PY'
+          import json, os, sys
+          ver = os.environ["VER"]
+          assets = {a["name"] for a in json.load(open("release.json")).get("assets", [])}
+          print("Release 资产：", ", ".join(sorted(assets)) or "(空)")
+          need = [f"FFmpegGUI-Setup-{ver}-Windows-x64.exe",
+                  "FFmpegGUI-Portable-Windows-x64.zip",
+                  "SHA256SUMS.txt"]
+          missing = [n for n in need if n not in assets]
+          if missing:
+              sys.exit(f"缺少 Release 资产：{missing}")
+          PY
+          curl -sSL -o SHA256SUMS.txt "${DL}/SHA256SUMS.txt"
+          cat SHA256SUMS.txt
+          python3 - <<'PY'
+          import hashlib, os, sys, urllib.request
+          base = os.environ["DL"]
+          bad = []
+          for line in open("SHA256SUMS.txt", encoding="utf-8"):
+              line = line.strip()
+              if not line:
+                  continue
+              want, name = line.split(None, 1)
+              name = name.strip()
+              d = hashlib.sha256()
+              with urllib.request.urlopen(f"{base}/{name}", timeout=300) as r:
+                  for chunk in iter(lambda: r.read(1 << 20), b""):
+                      d.update(chunk)
+              ok = d.hexdigest() == want
+              print(("✅" if ok else "❌"), name, d.hexdigest()[:16])
+              if not ok:
+                  bad.append(name)
+          if bad:
+              sys.exit(f"校验和不匹配：{bad}")
+          print("已发布产物与构建产物一致 ✅")
+          PY

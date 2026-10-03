@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer.iss
 
 #define AppName "FFmpeg 转码器"
-#define AppVersion "1.0.0"
+#define AppVersion "1.2.0"
 #define AppExeName "ffmpegGUI.exe"
 
 [Setup]

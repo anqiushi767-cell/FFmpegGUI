@@ -24,7 +24,7 @@ from task_card import TaskCard
 from trim_dialog import TrimDialog, fmt_clock
 from delogo_dialog import DelogoDialog
 from record_dialog import RecordDialog
-from config import config
+from config import config, atomic_write_json
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".flv", ".hlv", ".m4v",
               ".webm", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg", ".3gp",
@@ -787,7 +787,19 @@ class TaskPage(QWidget):
         if card:
             card.deleteLater()
         self.tasks.pop(tid, None)
-        self.running.discard(tid)
+        # 排队中的任务要从队列摘掉，否则 _pump 之后会去启动一个已删除的任务
+        if tid in self.pending:
+            self.pending.remove(tid)
+        # 运行中的任务要真停 ffmpeg；并发槽不在这里释放，等 worker 退出后由
+        # _on_worker_done 统一 discard——提前释放会让实际并发超过上限
+        w = self.workers.get(tid)
+        if w:
+            if getattr(w.task, "kind", "") == KIND_RECORD:
+                w.stop()   # 录制写 'q' 优雅退出（terminate 会卡 stdout 读取）
+            else:
+                w.cancel()
+        else:
+            self.running.discard(tid)
         self._refresh()
         self._update_toast()
         self.save_tasks()
@@ -880,6 +892,8 @@ class TaskPage(QWidget):
     def _pump(self):
         while self.pending and len(self.running) < config.max_concurrent:
             tid = self.pending.pop(0)
+            if tid not in self.tasks:
+                continue  # 任务已被删除（remove_task 已清队列，这里兜底）
             self.running.add(tid)
             self._start(tid)
 
@@ -932,9 +946,8 @@ class TaskPage(QWidget):
 
     def _save_tasks_now(self):
         try:
-            with open(TASKS_PATH, "w", encoding="utf-8") as f:
-                json.dump([t.to_dict() for t in self.tasks.values()],
-                          f, ensure_ascii=False, indent=2)
+            atomic_write_json(TASKS_PATH,
+                              [t.to_dict() for t in self.tasks.values()])
         except Exception:
             pass
 
@@ -947,7 +960,10 @@ class TaskPage(QWidget):
         self.setUpdatesEnabled(False)  # 批量恢复卡片，暂停重绘
         try:
             for d in data:
-                t = Task.from_dict(d)
+                try:
+                    t = Task.from_dict(d)
+                except Exception:
+                    continue  # 单条记录损坏就跳过，别连累其它任务恢复
                 if t.kind == KIND_STREAM:
                     pass  # 流媒体 path 是 URL，不做本地文件检查
                 elif not os.path.isfile(t.path):

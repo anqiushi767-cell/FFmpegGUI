@@ -242,10 +242,18 @@ def main():
         except Exception:
             pass  # 静默失败，不打扰用户
 
-    QTimer.singleShot(3000, lambda: (
-        threading.Thread(target=check_ffmpeg_update, daemon=True).start(),
+    def start_update_checks():
+        """启动后静默检查更新：开关关掉就一个请求都不发。
+
+        注意原来写成 `lambda: (A, B if 开关 else None)`，条件表达式只包住了 B，
+        结果 ffmpeg 检查无视开关总会执行、开关实际控住的是程序检查（和文案对不上）。
+        """
+        if not config.check_update_on_start:
+            return
+        threading.Thread(target=check_ffmpeg_update, daemon=True).start()
         threading.Thread(target=check_app_update, daemon=True).start()
-        if config.check_update_on_start else None))
+
+    QTimer.singleShot(3000, start_update_checks)
 
     sys.exit(app.exec())
 

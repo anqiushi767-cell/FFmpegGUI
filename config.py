@@ -1,8 +1,32 @@
 """应用配置：输出目录、编码、画质、格式、主题、完成后关机，持久化到 config.json。"""
 import json
 import os
+import tempfile
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def atomic_write_json(path, data):
+    """原子写 JSON：先写同目录临时文件，再 os.replace 覆盖目标。
+
+    直接 open(path, "w") 覆写时，如果写到一半崩溃/断电，会留下半截 JSON，
+    下次启动解析失败就静默丢掉配置或任务列表。os.replace 在同一分区上是
+    原子的，所以要么是旧文件、要么是完整的新文件。
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 class Config:
@@ -47,22 +71,21 @@ class Config:
 
     def save(self):
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump({
-                    "out_dir": self.out_dir,
-                    "encode_mode": self.encode_mode,
-                    "quality": self.quality,
-                    "out_format": self.out_format,
-                    "theme": self.theme,
-                    "theme_color": self.theme_color,
-                    "shutdown_after_done": self.shutdown_after_done,
-                    "hw_accel": self.hw_accel,
-                    "close_mode": self.close_mode,
-                    "record_draw_mouse": self.record_draw_mouse,
-                    "max_concurrent": self.max_concurrent,
-                    "notify_on_done": self.notify_on_done,
-                    "check_update_on_start": self.check_update_on_start,
-                }, f, ensure_ascii=False, indent=2)
+            atomic_write_json(CONFIG_PATH, {
+                "out_dir": self.out_dir,
+                "encode_mode": self.encode_mode,
+                "quality": self.quality,
+                "out_format": self.out_format,
+                "theme": self.theme,
+                "theme_color": self.theme_color,
+                "shutdown_after_done": self.shutdown_after_done,
+                "hw_accel": self.hw_accel,
+                "close_mode": self.close_mode,
+                "record_draw_mouse": self.record_draw_mouse,
+                "max_concurrent": self.max_concurrent,
+                "notify_on_done": self.notify_on_done,
+                "check_update_on_start": self.check_update_on_start,
+            })
         except Exception:
             pass
 

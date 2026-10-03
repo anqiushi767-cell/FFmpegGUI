@@ -17,6 +17,7 @@ _test*/
 _testtmp*/
 _dedup*/
 _dedup_*.txt
+_backup*/
 *.log
 
 # 离线依赖包（体积大，用 requirements.txt 安装即可）

@@ -31,30 +31,60 @@ def get_autostart():
     """读注册表判断是否已设置开机自启。"""
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY)
-        winreg.QueryValueEx(key, APP_NAME)
-        winreg.CloseKey(key)
-        return True
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY)
+        except FileNotFoundError:
+            return False
+        try:
+            winreg.QueryValueEx(key, APP_NAME)
+            return True
+        finally:
+            winreg.CloseKey(key)
     except OSError:
         return False
 
 
-def set_autostart(enabled):
-    """写/删 HKCU Run 键（当前用户自启，无需管理员权限）。"""
-    import winreg
-    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                         winreg.KEY_SET_VALUE)
-    if enabled:
+def autostart_command():
+    """自启命令行：源码运行用 pythonw + main.py，打包版直接用 exe。"""
+    frozen = getattr(sys, "frozen", False) or "__compiled__" in globals()
+    if frozen:
+        # 打包版：exe 自身就是 GUI 程序，只带 --tray 静默启动到托盘
+        return f'"{os.path.abspath(sys.executable)}" --tray'
+    exe = sys.executable
+    if exe.lower().endswith("python.exe"):
         # 强制 pythonw（无控制台），避免自启时弹黑窗
-        exe = sys.executable.replace("python.exe", "pythonw.exe")
-        cmd = f'"{exe}" "{os.path.join(APP_DIR, "main.py")}" --tray'
-        winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
-    else:
+        exe = exe[: -len("python.exe")] + "pythonw.exe"
+    if not os.path.isfile(exe):
+        exe = sys.executable
+    return f'"{exe}" "{os.path.join(APP_DIR, "main.py")}" --tray'
+
+
+def set_autostart(enabled):
+    """写/删 HKCU Run 键（当前用户自启，无需管理员权限）。
+
+    成功返回 True，失败返回 False——调用方据此回滚开关并提示用户，
+    不再让异常在信号回调里被静默吞掉（开关看起来打开了其实没写进去）。
+    """
+    try:
+        import winreg
+        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                                 winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
         try:
-            winreg.DeleteValue(key, APP_NAME)
-        except OSError:
-            pass
-    winreg.CloseKey(key)
+            if enabled:
+                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ,
+                                  autostart_command())
+                # 回读确认真的写进去了（安全软件/组策略可能静默拦截）
+                winreg.QueryValueEx(key, APP_NAME)
+            else:
+                try:
+                    winreg.DeleteValue(key, APP_NAME)
+                except FileNotFoundError:
+                    pass
+        finally:
+            winreg.CloseKey(key)
+        return True
+    except OSError:
+        return False
 
 
 def read_system_accent():
@@ -77,6 +107,7 @@ class SettingsPage(QWidget):
     app_download_done = Signal(str)     # 下载完成（zip 路径）
     app_download_failed = Signal(str)   # 下载失败（错误信息）
     ffmpeg_version_ready = Signal(str)  # ffmpeg 版本异步获取结果
+    hw_accel_ready = Signal(bool)       # NVENC 可用性异步检测结果
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,8 +118,11 @@ class SettingsPage(QWidget):
         self.app_download_done.connect(self._on_download_done)
         self.app_download_failed.connect(self._on_download_failed)
         self.ffmpeg_version_ready.connect(self._on_ffmpeg_version)
+        self.hw_accel_ready.connect(self._on_hw_accel_ready)
         # 异步获取 ffmpeg 版本（不阻塞 UI + 失败重试）
         threading.Thread(target=self._fetch_ffmpeg_version, daemon=True).start()
+        # 异步检测 NVENC（要真跑一次极短编码，别卡住启动）
+        threading.Thread(target=self._probe_hw_accel, daemon=True).start()
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -187,7 +221,7 @@ class SettingsPage(QWidget):
         la.addLayout(la_col, 1)
         self.autoSwitch = SwitchButton(card_auto)
         self.autoSwitch.setChecked(get_autostart())
-        self.autoSwitch.checkedChanged.connect(set_autostart)
+        self.autoSwitch.checkedChanged.connect(self._on_autostart)
         la.addWidget(self.autoSwitch, 0, Qt.AlignVCenter)
         root.addWidget(card_auto)
 
@@ -197,15 +231,13 @@ class SettingsPage(QWidget):
         lh.setContentsMargins(16, 14, 16, 14)
         hw_col = QVBoxLayout()
         hw_col.addWidget(BodyLabel("硬件加速（NVIDIA NVENC）", card_hw))
-        hw_col.addWidget(BodyLabel("显卡转码，速度翻倍（需 NVIDIA 显卡 + 驱动支持）",
-                                   card_hw))
+        self.hwHintLabel = BodyLabel("正在检测显卡编码器…", card_hw)
+        hw_col.addWidget(self.hwHintLabel)
         hw_col.addStretch(1)
         lh.addLayout(hw_col, 1)
         self.hwSwitch = SwitchButton(card_hw)
-        from converter import nvenc_available
-        hw_ok = nvenc_available()
-        self.hwSwitch.setChecked(config.hw_accel and hw_ok)
-        self.hwSwitch.setEnabled(hw_ok)
+        self.hwSwitch.setChecked(False)
+        self.hwSwitch.setEnabled(False)  # 检测出结果才允许点
         self.hwSwitch.checkedChanged.connect(self._on_hw)
         lh.addWidget(self.hwSwitch, 0, Qt.AlignVCenter)
         root.addWidget(card_hw)
@@ -279,8 +311,9 @@ class SettingsPage(QWidget):
         lcu = QHBoxLayout(card_cu)
         lcu.setContentsMargins(16, 14, 16, 14)
         cu_col = QVBoxLayout()
-        cu_col.addWidget(BodyLabel("启动时检查 FFmpeg 更新", card_cu))
-        cu_col.addWidget(BodyLabel("有新版本时托盘提示", card_cu))
+        cu_col.addWidget(BodyLabel("启动时检查更新", card_cu))
+        cu_col.addWidget(BodyLabel("检查 FFmpeg 与程序新版本，有更新时托盘提示",
+                                   card_cu))
         cu_col.addStretch(1)
         lcu.addLayout(cu_col, 1)
         self.checkUpdateSwitch = SwitchButton(card_cu)
@@ -437,6 +470,17 @@ class SettingsPage(QWidget):
         config.theme = idx
         config.save()
 
+    def _on_autostart(self, checked):
+        """开机自启开关：写失败就回滚开关，避免"看着是开的其实没写进去"。"""
+        if set_autostart(checked):
+            return
+        InfoBar.error("设置失败", "无法写入开机启动项（可能被安全软件或组策略拦截）",
+                      duration=3000, position=InfoBarPosition.BOTTOM_RIGHT,
+                      parent=self.window())
+        self.autoSwitch.blockSignals(True)
+        self.autoSwitch.setChecked(not checked)
+        self.autoSwitch.blockSignals(False)
+
     def _set_color(self, c):
         config.theme_color = c
         setThemeColor(QColor(c), save=False)
@@ -476,6 +520,24 @@ class SettingsPage(QWidget):
 
     def _on_ffmpeg_version(self, v):
         self.ffVerLabel.setText(f"当前版本：{v or '未检测到'}")
+
+    def _probe_hw_accel(self):
+        """后台检测 NVENC（真编一帧确认真能用，不能在 UI 线程跑）。"""
+        try:
+            from converter import nvenc_available
+            ok = nvenc_available()
+        except Exception:
+            ok = False
+        self.hw_accel_ready.emit(ok)
+
+    def _on_hw_accel_ready(self, ok):
+        self.hwSwitch.blockSignals(True)   # 程序设置开关，别写进 config
+        self.hwSwitch.setChecked(bool(config.hw_accel and ok))
+        self.hwSwitch.blockSignals(False)
+        self.hwSwitch.setEnabled(ok)
+        self.hwHintLabel.setText(
+            "显卡转码，速度翻倍（需 NVIDIA 显卡 + 驱动支持）" if ok
+            else "未检测到 NVIDIA 编码器（无 N 卡或驱动不支持）")
 
     def _check_app_update(self):
         """后台请求 GitHub 最新版本，避免阻塞 UI。"""
@@ -545,8 +607,13 @@ class SettingsPage(QWidget):
 
     def _on_download_done(self, zip_path):
         import updater
-        self.appUpdateLabel.setText("下载完成，即将重启应用更新…")
-        updater.apply_update(zip_path)
+        self.appUpdateLabel.setText("下载完成，正在准备更新…")
+        try:
+            updater.apply_update(zip_path)   # 校验不过会抛 UpdateError
+        except Exception as e:
+            self.appUpdateLabel.setText(f"更新失败：{e}")
+            self.appUpdateBtn.setEnabled(True)
+            return
         QApplication.instance().quit()
 
     def _on_download_failed(self, err):

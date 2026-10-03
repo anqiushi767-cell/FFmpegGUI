@@ -1,6 +1,7 @@
 """元数据编辑测试：标题 + 封面嵌入。"""
 import os
 import subprocess
+import sys
 
 from PySide6.QtCore import QCoreApplication, QTimer
 
@@ -49,10 +50,10 @@ def finish():
         print("封面嵌入:", has_pic)
         ok = ok and title == "测试标题" and has_pic
     print("RESULT:", "PASS" if ok else "FAIL")
-    app.quit()
+    app.exit(0 if ok else 1)
 
 
 w.finished.connect(finish)
-QTimer.singleShot(30000, lambda: (print("TIMEOUT"), app.quit()))
+QTimer.singleShot(30000, lambda: (print("TIMEOUT"), app.exit(1)))
 w.start()
-app.exec()
+sys.exit(app.exec())  # FAIL/超时 → 非零退出码，CI 才能真正拦住

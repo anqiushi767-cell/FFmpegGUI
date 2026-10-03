@@ -1,6 +1,7 @@
 """第三批测试：流媒体下载（本地 HLS 分片模拟 m3u8）。"""
 import os
 import subprocess
+import sys
 
 from PySide6.QtCore import QCoreApplication, QTimer
 
@@ -42,10 +43,11 @@ def _finish(t):
     dur = probe_duration(t.out_path) if ok else 0
     print(f"下载: {'PASS' if ok else 'FAIL'} 文件={os.path.basename(t.out_path)} "
           f"时长={dur:.1f}s (期望≈6)")
-    print("RESULT:", "PASS" if ok and 5.5 < dur < 6.5 else "FAIL")
-    app.quit()
+    passed = ok and 5.5 < dur < 6.5
+    print("RESULT:", "PASS" if passed else "FAIL")
+    app.exit(0 if passed else 1)
 
 
-QTimer.singleShot(60000, lambda: (print("TIMEOUT"), app.quit()))
+QTimer.singleShot(60000, lambda: (print("TIMEOUT"), app.exit(1)))
 w.start()
-app.exec()
+sys.exit(app.exec())  # FAIL/超时 → 非零退出码，CI 才能真正拦住

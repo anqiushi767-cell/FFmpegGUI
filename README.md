@@ -15,7 +15,7 @@
 | 文件 | 用途 |
 |---|---|
 | `main.py` | 程序入口：主窗口 + 系统托盘 + 单实例保护 |
-| `converter.py` | 核心引擎：FFmpeg 命令构建、任务调度、进度/速度/ETA 解析 |
+| `converter.py` | 核心引擎：Task 模型 + 操作描述表（命令构建/输出命名/进度基准）+ 调度与进度解析 |
 | `task_page.py` | 任务页：拖放、任务卡片列表、各类操作入口 |
 | `task_card.py` | 任务卡片：进度条 + 状态色 + 操作按钮 |
 | `settings_page.py` | 设置页：输出目录 / 编码 / 主题 / 并发 / FFmpeg 引擎 |
@@ -65,10 +65,13 @@ uv pip install --python .venv/Scripts/python.exe -r requirements.txt
 ## 测试
 
 ```bash
+.venv/Scripts/python.exe build_cmd_test.py   # 命令构建/命名纯函数单测（不需要 ffmpeg）
 QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe smoke_test.py
 QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe batch1_test.py
 # ...（batch2~4 覆盖音频/合并/变速/元数据/字幕/去水印）
 ```
+
+测试失败/超时以非零退出码结束，CI 会据此拦住回归。
 
 ## 许可证
 

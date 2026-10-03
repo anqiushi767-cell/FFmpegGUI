@@ -1,6 +1,7 @@
 """第二批新功能测试：合并视频 / 变速 / 定点截图。"""
 import os
 import subprocess
+import sys
 
 from PySide6.QtCore import QCoreApplication, QTimer
 
@@ -43,7 +44,7 @@ def check_done():
                   and 7.5 < m < 8.5 and 2.3 < s < 3.0)
         print("\n".join(results))
         print("RESULT:", "PASS" if all_ok else "FAIL")
-        app.quit()
+        app.exit(0 if all_ok else 1)
 
 
 tasks = {}
@@ -68,5 +69,5 @@ launch(Task(path=srcs[0], out_dir=tmp, encode_mode="h264", out_format="mp4",
 launch(Task(path=srcs[0], out_dir=tmp, encode_mode="copy",
             kind=KIND_SHOT, shot_time=2), "shot")
 
-QTimer.singleShot(90000, lambda: (print("TIMEOUT"), app.quit()))
-app.exec()
+QTimer.singleShot(90000, lambda: (print("TIMEOUT"), app.exit(1)))
+sys.exit(app.exec())  # FAIL/超时 → 非零退出码，CI 才能真正拦住

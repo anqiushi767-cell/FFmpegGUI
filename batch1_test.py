@@ -1,6 +1,7 @@
 """第一批新功能测试：提取音频 / 响度归一化 / GIF。"""
 import os
 import subprocess
+import sys
 
 from PySide6.QtCore import QCoreApplication, QTimer
 
@@ -54,7 +55,7 @@ def check(label):
             except ValueError:
                 pass
         print("RESULT:", "PASS" if ok else "FAIL")
-        app.quit()
+        app.exit(0 if ok else 1)
 
 
 for (label, _), w in zip(tasks_by_label, workers):
@@ -62,5 +63,5 @@ for (label, _), w in zip(tasks_by_label, workers):
                      check(l) if st != "running" else None)
     w.start()
 
-QTimer.singleShot(120000, lambda: (print("TIMEOUT"), app.quit()))
-app.exec()
+QTimer.singleShot(120000, lambda: (print("TIMEOUT"), app.exit(1)))
+sys.exit(app.exec())  # FAIL/超时 → 非零退出码，CI 才能真正拦住
